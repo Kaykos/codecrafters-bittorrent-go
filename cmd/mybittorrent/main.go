@@ -110,14 +110,12 @@ func decodeInteger(bencodedString string) (int, int, error) {
 }
 
 func main() {
-	//command := os.Args[1]
-	command := "decode"
+	command := os.Args[1]
+	//command := "decode"
 
 	if command == "decode" {
-		//bencodedValue := os.Args[2]
-		bencodedValue := "l10:strawberryi39ee"
-		//bencodedValue := "5:hello"
-		//bencodedValue := "i-123e"
+		bencodedValue := os.Args[2]
+		//bencodedValue := "l10:strawberryi39ee"
 
 		decoded, _, err := decodeBencode(bencodedValue)
 		if err != nil {
