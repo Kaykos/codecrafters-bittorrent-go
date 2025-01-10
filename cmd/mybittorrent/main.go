@@ -74,17 +74,22 @@ func decodeList(bencodedString string) (interface{}, int, error) {
 	return elements, processed + 2, nil
 }
 
+// Strings come as "10:strawberry"
 func decodeString(bencodedString string) (string, int, error) {
 	firstColonIndex := strings.IndexByte(bencodedString, ':')
 
+	// Length of the segment before the semicolon
 	lengthStr := bencodedString[:firstColonIndex]
 
+	// Actual length of the string to decode
 	length, err := strconv.Atoi(lengthStr)
 	if err != nil {
 		return "", 0, err
 	}
 
-	return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], length + 2, nil
+	return bencodedString[firstColonIndex+1 : firstColonIndex+1+length],
+		length + len(lengthStr) + 1, // All the processed bytes, +1 to account for the ':'
+		nil
 }
 
 func decodeInteger(bencodedString string) (int, int, error) {
@@ -105,12 +110,12 @@ func decodeInteger(bencodedString string) (int, int, error) {
 }
 
 func main() {
-	command := os.Args[1]
-	//command := "decode"
+	//command := os.Args[1]
+	command := "decode"
 
 	if command == "decode" {
-		bencodedValue := os.Args[2]
-		//bencodedValue := "lli4eei5ee"
+		//bencodedValue := os.Args[2]
+		bencodedValue := "l10:strawberryi39ee"
 		//bencodedValue := "5:hello"
 		//bencodedValue := "i-123e"
 
