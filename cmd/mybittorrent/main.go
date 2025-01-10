@@ -17,6 +17,7 @@ var _ = json.Marshal
 // - 10:hello12345 -> hello12345
 func decodeBencode(bencodedString string) (interface{}, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
+		// Decode a string
 		var firstColonIndex int
 
 		for i := 0; i < len(bencodedString); i++ {
@@ -34,6 +35,30 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 		}
 
 		return bencodedString[firstColonIndex+1 : firstColonIndex+1+length], nil
+	} else if bencodedString[0] == 'i' {
+		// Decode an integer
+		var eIndex int
+
+		// Find index of 'e'
+		for i := 0; i < len(bencodedString); i++ {
+			if bencodedString[i] == 'e' {
+				eIndex = i
+				break
+			}
+		}
+
+		if eIndex == 0 {
+			return 0, fmt.Errorf("Invalid encoded integer")
+		}
+
+		// Convert integer part of the string
+		intStr := bencodedString[1:eIndex]
+		intVal, err := strconv.Atoi(intStr)
+		if err != nil {
+			return 0, err
+		}
+
+		return intVal, nil
 	} else {
 		return "", fmt.Errorf("Only strings are supported at the moment")
 	}
