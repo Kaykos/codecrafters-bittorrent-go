@@ -45,18 +45,33 @@ func isBencodedList(bencodedString string) bool {
 
 // Lists come as "l<bencoded_elements>e"
 func decodeList(bencodedString string) (interface{}, int, error) {
-	elementsStr := bencodedString[1 : len(bencodedString)-1]
+	// Remove initial 'l'
+	elementsStr := bencodedString[1:]
+	// Slice of decoded elements
 	elements := []any{}
-	for len(elementsStr) > 0 {
+	// Processed bytes for the whole list string
+	processed := 0
+	for {
+		// Found the end of the list
+		if elementsStr[0] == 'e' {
+			break
+		}
+
+		// Decode single element
 		val, count, err := decodeBencode(elementsStr)
 		if err != nil {
 			return nil, 0, err
 		}
+
 		elements = append(elements, val)
+		processed += count
+
+		// Move the initial position by the amount of processed bytes of the element
 		elementsStr = elementsStr[count:]
 	}
 
-	return elements, len(bencodedString), nil
+	// +2 to account for the 'l' and 'e'
+	return elements, processed + 2, nil
 }
 
 func decodeString(bencodedString string) (string, int, error) {
@@ -73,14 +88,14 @@ func decodeString(bencodedString string) (string, int, error) {
 }
 
 func decodeInteger(bencodedString string) (int, int, error) {
-	eIndex := strings.IndexByte(bencodedString, 'e')
+	firstEIndex := strings.IndexByte(bencodedString, 'e')
 
-	if eIndex == 0 {
+	if firstEIndex == 0 {
 		return 0, 0, fmt.Errorf("Invalid encoded integer")
 	}
 
 	// Convert integer part of the string
-	intStr := bencodedString[1:eIndex]
+	intStr := bencodedString[1:firstEIndex]
 	intVal, err := strconv.Atoi(intStr)
 	if err != nil {
 		return 0, 0, err
@@ -95,7 +110,7 @@ func main() {
 
 	if command == "decode" {
 		bencodedValue := os.Args[2]
-		//bencodedValue := "l5:helloi52ee"
+		//bencodedValue := "lli4eei5ee"
 		//bencodedValue := "5:hello"
 		//bencodedValue := "i-123e"
 
