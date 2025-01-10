@@ -28,21 +28,23 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 	}
 }
 
+// Check if the first position of the string is a numerical digit
 func isBencodedString(bencodedString string) bool {
 	return unicode.IsDigit(rune(bencodedString[0]))
 }
 
+// Check if the first position of the string is an 'i'
 func isBencodedInteger(bencodedString string) bool {
 	return bencodedString[0] == 'i'
 }
 
+// Check if the first position of the string is an 'l'
 func isBencodedList(bencodedString string) bool {
 	return bencodedString[0] == 'l'
 }
 
+// Lists come as "l<bencoded_elements>e"
 func decodeList(bencodedString string) (interface{}, int, error) {
-	//l5:helloi52ee
-	//5:helloi52e
 	elementsStr := bencodedString[1 : len(bencodedString)-1]
 	elements := []any{}
 	for len(elementsStr) > 0 {
