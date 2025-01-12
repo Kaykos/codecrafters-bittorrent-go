@@ -2,11 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
-	"unicode"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
@@ -16,7 +17,7 @@ var _ = json.Marshal
 // Example:
 // - 5:hello -> hello
 // - 10:hello12345 -> hello12345
-func decodeBencode(bencodedString string) (interface{}, int, error) {
+func decodeBencode(bencodedString string) (any, int, error) {
 	switch bencodedString[0] {
 	case 'i':
 		return decodeInteger(bencodedString)
@@ -27,38 +28,10 @@ func decodeBencode(bencodedString string) (interface{}, int, error) {
 	default:
 		return decodeString(bencodedString)
 	}
-	//if isBencodedString(bencodedString) {
-	//	return decodeString(bencodedString)
-	//} else if isBencodedInteger(bencodedString) {
-	//	return decodeInteger(bencodedString)
-	//} else if isBencodedList(bencodedString) {
-	//	return decodeList(bencodedString)
-	//} else if isBencodedDictionary(bencodedString) {
-	//return decodeDictionary(bencodedString)
-	//} else {
-	//	return "", 0, fmt.Errorf("Only strings are supported at the moment")
-	//}
-}
-
-// Check if the first position of the string is a numerical digit
-func isBencodedString(bencodedString string) bool {
-	return unicode.IsDigit(rune(bencodedString[0]))
-}
-
-func isBencodedInteger(bencodedString string) bool {
-	return bencodedString[0] == 'i'
-}
-
-func isBencodedList(bencodedString string) bool {
-	return bencodedString[0] == 'l'
-}
-
-func isBencodedDictionary(bencodedString string) bool {
-	return bencodedString[0] == 'd'
 }
 
 // Lists come as "l<bencoded_elements>e"
-func decodeList(bencodedString string) (interface{}, int, error) {
+func decodeList(bencodedString string) ([]any, int, error) {
 	// Remove initial 'l'
 	elementsStr := bencodedString[1:] // e
 	// Slice of decoded elements
@@ -89,7 +62,7 @@ func decodeList(bencodedString string) (interface{}, int, error) {
 }
 
 // Dictionries come as "d<key1><value1>...<keyN><valueN>e"
-func decodeDictionary(bencodedString string) (interface{}, int, error) {
+func decodeDictionary(bencodedString string) (map[string]any, int, error) {
 	// Remove initial 'd'
 	elementsStr := bencodedString[1:]
 	// Map of decoded elements
@@ -166,9 +139,38 @@ func decodeInteger(bencodedString string) (int, int, error) {
 	return intVal, len(intStr) + 2, nil
 }
 
+func fileInfo(fileName string) (string, error) {
+	file, err := os.Open(fileName)
+	if err != nil {
+		return "", err
+	}
+
+	defer file.Close()
+
+	fileContent, err := io.ReadAll(file)
+	if err != nil {
+		return "", err
+	}
+
+	torrentDict, _, err := decodeDictionary(string(fileContent))
+	if err != nil {
+		return "", err
+	}
+
+	announce := torrentDict["announce"]
+	infoDict, ok := torrentDict["info"].(map[string]any)
+	if !ok {
+		return "", errors.New("info is not a map")
+	}
+
+	fileSize := infoDict["length"]
+
+	return fmt.Sprintf("Tracker URL: %s\nLength: %d", announce, fileSize), nil
+}
+
 func main() {
 	command := os.Args[1]
-	//command := "decode"
+	//command = "info"
 
 	if command == "decode" {
 		bencodedValue := os.Args[2]
@@ -182,6 +184,17 @@ func main() {
 
 		jsonOutput, _ := json.Marshal(decoded)
 		fmt.Println(string(jsonOutput))
+	} else if command == "info" {
+		file := os.Args[2]
+		//file := "sample.torrent"
+
+		info, err := fileInfo(file)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Println(info)
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
