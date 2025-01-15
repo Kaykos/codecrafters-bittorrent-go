@@ -64,7 +64,7 @@ func decodeList(bencodedString string) ([]any, int, error) {
 	return elements, processed + 2, nil
 }
 
-// Dictionries come as "d<key1><value1>...<keyN><valueN>e"
+// Dictionaries come as "d<key1><value1>...<keyN><valueN>e"
 func decodeDictionary(bencodedString string) (map[string]any, int, error) {
 	// Remove initial 'd'
 	elementsStr := bencodedString[1:]
@@ -168,12 +168,17 @@ func fileInfo(fileName string) (string, error) {
 	}
 
 	fileSize := infoDict["length"]
-	hash := infoHash(infoDict)
+	hashInfo := infoHash(infoDict)
+	pieceLength := infoDict["piece length"]
 
-	return fmt.Sprintf("Tracker URL: %s\nLength: %d\nInfo Hash: %s", announce, fileSize, hash), nil
+	pieces, ok := infoDict["pieces"].(string)
+	hashPieces := pieceHashes(pieces)
+	hashPiecesStr := strings.Join(hashPieces, "\n")
+
+	return fmt.Sprintf("Tracker URL: %s\nLength: %d\nInfo Hash: %s\nPiece Length: %d\nPiece Hashes:\n%s", announce, fileSize, hashInfo, pieceLength, hashPiecesStr), nil
 }
 
-// Func infoHash bencodes the info map and returns the SHA-1 hash represented in hexadecimal format
+// infoHash bencodes the info map and returns the SHA-1 hash represented in hexadecimal format
 func infoHash(info map[string]any) string {
 	infoStr := bencodeMap(info)
 
@@ -181,6 +186,19 @@ func infoHash(info map[string]any) string {
 	h.Write([]byte(infoStr))
 
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func pieceHashes(pieces string) []string {
+	n := len(pieces) / 20
+	hashes := make([]string, 0, n)
+
+	for i := 0; i < n; i++ {
+		hash := pieces[i*20 : i*20+20]
+		hexHash := hex.EncodeToString([]byte(hash))
+		hashes = append(hashes, hexHash)
+	}
+
+	return hashes
 }
 
 func bencodeValue(v any) string {
