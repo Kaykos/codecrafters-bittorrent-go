@@ -1,11 +1,14 @@
 package main
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
@@ -159,13 +162,84 @@ func fileInfo(fileName string) (string, error) {
 
 	announce := torrentDict["announce"]
 	infoDict, ok := torrentDict["info"].(map[string]any)
+
 	if !ok {
 		return "", errors.New("info is not a map")
 	}
 
 	fileSize := infoDict["length"]
+	hash := infoHash(infoDict)
 
-	return fmt.Sprintf("Tracker URL: %s\nLength: %d", announce, fileSize), nil
+	return fmt.Sprintf("Tracker URL: %s\nLength: %d\nInfo Hash: %s", announce, fileSize, hash), nil
+}
+
+// Func infoHash bencodes the info map and returns the SHA-1 hash represented in hexadecimal format
+func infoHash(info map[string]any) string {
+	infoStr := bencodeMap(info)
+
+	h := sha1.New()
+	h.Write([]byte(infoStr))
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func bencodeValue(v any) string {
+	var bencoded string
+
+	switch v := v.(type) {
+	case string:
+		bencoded = bencodeString(v)
+	case int:
+		bencoded = bencodeInteger(v)
+	case []any:
+		bencoded = bencodeList(v)
+	case map[string]any:
+		bencoded = bencodeMap(v)
+	}
+
+	return bencoded
+}
+
+func bencodeString(s string) string {
+	return fmt.Sprintf("%d:%s", len(s), s)
+}
+
+func bencodeInteger(i int) string {
+	return fmt.Sprintf("i%de", i)
+}
+
+func bencodeList(l []any) string {
+	var builder strings.Builder
+
+	builder.WriteByte('l')
+	for v := range l {
+		builder.WriteString(bencodeValue(v))
+	}
+	builder.WriteByte('e')
+
+	return builder.String()
+}
+
+func bencodeMap(m map[string]any) string {
+	var builder strings.Builder
+	builder.WriteByte('d')
+
+	// A bencoded dictionary must have its keys in lexicographical order
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+
+	// Iterate map using the sorted keys
+	for _, k := range keys {
+		builder.WriteString(bencodeString(k))
+		builder.WriteString(bencodeValue(m[k]))
+	}
+
+	builder.WriteByte('e')
+
+	return builder.String()
 }
 
 func main() {
@@ -186,7 +260,7 @@ func main() {
 		fmt.Println(string(jsonOutput))
 	} else if command == "info" {
 		file := os.Args[2]
-		//file := "sample.torrent"
+		//file = "sample.torrent"
 
 		info, err := fileInfo(file)
 		if err != nil {
