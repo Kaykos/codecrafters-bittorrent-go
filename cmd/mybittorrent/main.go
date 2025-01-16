@@ -1,174 +1,145 @@
 package main
 
 import (
+	"context"
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
+	"time"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
 // Ensures gofmt doesn't remove the "os" encoding/json import (feel free to remove this!)
 var _ = json.Marshal
 
-// Example:
-// - 5:hello -> hello
-// - 10:hello12345 -> hello12345
-func decodeBencode(bencodedString string) (any, int, error) {
-	switch bencodedString[0] {
-	case 'i':
-		return decodeInteger(bencodedString)
-	case 'l':
-		return decodeList(bencodedString)
-	case 'd':
-		return decodeDictionary(bencodedString)
-	default:
-		return decodeString(bencodedString)
-	}
-}
-
-// Lists come as "l<bencoded_elements>e"
-func decodeList(bencodedString string) ([]any, int, error) {
-	// Remove initial 'l'
-	elementsStr := bencodedString[1:] // e
-	// Slice of decoded elements
-	elements := []any{}
-	// Processed bytes for the whole list string
-	processed := 0
-	for {
-		// Found the end of the list
-		if elementsStr[0] == 'e' {
-			break
-		}
-
-		// Decode single element
-		val, count, err := decodeBencode(elementsStr)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		elements = append(elements, val)
-		processed += count
-
-		// Move the initial position by the amount of processed bytes of the element
-		elementsStr = elementsStr[count:]
+func peers(metaInfo map[string]any) ([]string, error) {
+	trackerUrl, ok := metaInfo["announce"].(string)
+	if !ok {
+		return nil, errors.New("announce must be a string")
 	}
 
-	// +2 to account for the 'l' and 'e'
-	return elements, processed + 2, nil
-}
-
-// Dictionaries come as "d<key1><value1>...<keyN><valueN>e"
-func decodeDictionary(bencodedString string) (map[string]any, int, error) {
-	// Remove initial 'd'
-	elementsStr := bencodedString[1:]
-	// Map of decoded elements
-	elements := map[string]any{}
-	// Processed bytes for the whole dictionary string
-	processed := 0
-	for {
-		// Found the end of the dictionary
-		if elementsStr[0] == 'e' {
-			break
-		}
-
-		// Decode single element
-		key, count, err := decodeString(elementsStr)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		// Move the initial position by the amount of processed bytes of the element
-		elementsStr = elementsStr[count:]
-		processed += count
-
-		// Decode single element
-		val, count, err := decodeBencode(elementsStr)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		// Move the initial position by the amount of processed bytes of the element
-		elementsStr = elementsStr[count:]
-		processed += count
-
-		elements[key] = val
+	client := &http.Client{
+		Timeout: time.Second * 10,
 	}
 
-	// +2 to account for the 'd' and 'e'
-	return elements, processed + 2, nil
-}
-
-// Strings come as "10:strawberry"
-func decodeString(bencodedString string) (string, int, error) {
-	firstColonIndex := strings.IndexByte(bencodedString, ':')
-
-	// Length of the segment before the semicolon
-	lengthStr := bencodedString[:firstColonIndex]
-
-	// Actual length of the string to decode
-	length, err := strconv.Atoi(lengthStr)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, trackerUrl, nil)
 	if err != nil {
-		return "", 0, err
+		return nil, err
 	}
 
-	return bencodedString[firstColonIndex+1 : firstColonIndex+1+length],
-		length + len(lengthStr) + 1, // All the processed bytes, +1 to account for the ':'
-		nil
-}
-
-// i52e
-func decodeInteger(bencodedString string) (int, int, error) {
-	firstEIndex := strings.IndexByte(bencodedString, 'e')
-
-	if firstEIndex == 0 {
-		return 0, 0, fmt.Errorf("Invalid encoded integer")
-	}
-
-	// Convert integer part of the string
-	intStr := bencodedString[1:firstEIndex]
-	intVal, err := strconv.Atoi(intStr)
+	queryParams, err := peersQueryParams(metaInfo, req)
 	if err != nil {
-		return 0, 0, err
+		return nil, err
+	}
+	req.URL.RawQuery = queryParams
+
+	res, err := client.Do(req)
+	defer res.Body.Close()
+
+	if res.StatusCode != http.StatusOK {
+		return nil, errors.New(res.Status)
 	}
 
-	// +2 to account for 'i' and 'e'
-	return intVal, len(intStr) + 2, nil
+	resContent, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	decodedRes, _, err := decodeDictionary(string(resContent))
+	if err != nil {
+		return nil, err
+	}
+
+	return buildPeerAddresses(decodedRes), nil
 }
 
-func fileInfo(fileName string) (string, error) {
+// buildPeerAddresses returns a slice of strings containing the peer addresses. It uses the map representing the response
+// body to construct IP and port for each peer
+func buildPeerAddresses(resBody map[string]any) []string {
+	peersStr := resBody["peers"].(string)
+	n := len(peersStr) / 6
+
+	peerAddresses := make([]string, 0, n)
+
+	for i := 0; i < n; i++ {
+		peer := peersStr[i*6 : i*6+6]
+
+		ipSlice := []byte(peer[:4])
+		portSlice := []byte(peer[4:])
+
+		ip := fmt.Sprintf("%d.%d.%d.%d", ipSlice[0], ipSlice[1], ipSlice[2], ipSlice[3])
+		port := binary.BigEndian.Uint16(portSlice)
+
+		peerAddresses = append(peerAddresses, fmt.Sprintf("%s:%d", ip, port))
+	}
+
+	return peerAddresses
+}
+
+// peersQueryParams builds the query parameters needed to execute the peers request, using the metainfo map. Returns
+// a string containing the URL encoded query parameters
+func peersQueryParams(metaInfo map[string]any, req *http.Request) (string, error) {
+	infoDict, ok := metaInfo["info"].(map[string]any)
+	if !ok {
+		return "", errors.New("info must be a map[string]any")
+	}
+
+	length, ok := infoDict["length"].(int)
+	if !ok {
+		return "", errors.New("length must be an int")
+	}
+
+	q := req.URL.Query()
+	q.Add("info_hash", infoHash(infoDict))
+	q.Add("peer_id", "kaykos-go-bittorrent")
+	q.Add("port", "6881")
+	q.Add("uploaded", "0")
+	q.Add("downloaded", "0")
+	q.Add("left", strconv.Itoa(length))
+	q.Add("compact", "1")
+
+	return q.Encode(), nil
+}
+
+func fileInfo(fileName string) (map[string]any, error) {
 	file, err := os.Open(fileName)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	defer file.Close()
 
 	fileContent, err := io.ReadAll(file)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	torrentDict, _, err := decodeDictionary(string(fileContent))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	announce := torrentDict["announce"]
-	infoDict, ok := torrentDict["info"].(map[string]any)
+	return torrentDict, nil
+}
+
+func fileInfoStr(metaInfo map[string]any) (string, error) {
+	announce := metaInfo["announce"]
+	infoDict, ok := metaInfo["info"].(map[string]any)
 
 	if !ok {
 		return "", errors.New("info is not a map")
 	}
 
 	fileSize := infoDict["length"]
-	hashInfo := infoHash(infoDict)
+	hashInfo := toHex(infoHash(infoDict))
 	pieceLength := infoDict["piece length"]
 
 	pieces, ok := infoDict["pieces"].(string)
@@ -178,14 +149,18 @@ func fileInfo(fileName string) (string, error) {
 	return fmt.Sprintf("Tracker URL: %s\nLength: %d\nInfo Hash: %s\nPiece Length: %d\nPiece Hashes:\n%s", announce, fileSize, hashInfo, pieceLength, hashPiecesStr), nil
 }
 
-// infoHash bencodes the info map and returns the SHA-1 hash represented in hexadecimal format
+// infoHash bencodes the info map and returns the SHA-1 hash string representation
 func infoHash(info map[string]any) string {
 	infoStr := bencodeMap(info)
 
 	h := sha1.New()
 	h.Write([]byte(infoStr))
 
-	return hex.EncodeToString(h.Sum(nil))
+	return string(h.Sum(nil))
+}
+
+func toHex(s string) string {
+	return hex.EncodeToString([]byte(s))
 }
 
 func pieceHashes(pieces string) []string {
@@ -201,65 +176,6 @@ func pieceHashes(pieces string) []string {
 	return hashes
 }
 
-func bencodeValue(v any) string {
-	var bencoded string
-
-	switch v := v.(type) {
-	case string:
-		bencoded = bencodeString(v)
-	case int:
-		bencoded = bencodeInteger(v)
-	case []any:
-		bencoded = bencodeList(v)
-	case map[string]any:
-		bencoded = bencodeMap(v)
-	}
-
-	return bencoded
-}
-
-func bencodeString(s string) string {
-	return fmt.Sprintf("%d:%s", len(s), s)
-}
-
-func bencodeInteger(i int) string {
-	return fmt.Sprintf("i%de", i)
-}
-
-func bencodeList(l []any) string {
-	var builder strings.Builder
-
-	builder.WriteByte('l')
-	for v := range l {
-		builder.WriteString(bencodeValue(v))
-	}
-	builder.WriteByte('e')
-
-	return builder.String()
-}
-
-func bencodeMap(m map[string]any) string {
-	var builder strings.Builder
-	builder.WriteByte('d')
-
-	// A bencoded dictionary must have its keys in lexicographical order
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
-
-	// Iterate map using the sorted keys
-	for _, k := range keys {
-		builder.WriteString(bencodeString(k))
-		builder.WriteString(bencodeValue(m[k]))
-	}
-
-	builder.WriteByte('e')
-
-	return builder.String()
-}
-
 func main() {
 	command := os.Args[1]
 	//command = "info"
@@ -268,7 +184,7 @@ func main() {
 		bencodedValue := os.Args[2]
 		//bencodedValue := "d3:foo3:bar5:helloi52ee"
 
-		decoded, _, err := decodeBencode(bencodedValue)
+		decoded, _, err := decodeValue(bencodedValue)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -280,13 +196,37 @@ func main() {
 		file := os.Args[2]
 		//file = "sample.torrent"
 
-		info, err := fileInfo(file)
+		fileInfo, err := fileInfo(file)
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 
-		fmt.Println(info)
+		infoStr, err := fileInfoStr(fileInfo)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Println(infoStr)
+	} else if command == "peers" {
+		file := os.Args[2]
+
+		fileInfo, err := fileInfo(file)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		peerAddresses, err := peers(fileInfo)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		for _, peer := range peerAddresses {
+			fmt.Println(peer)
+		}
+
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
