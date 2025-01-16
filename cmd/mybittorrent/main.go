@@ -23,7 +23,7 @@ var _ = json.Marshal
 func peers(metaInfo map[string]any) ([]string, error) {
 	trackerUrl, ok := metaInfo["announce"].(string)
 	if !ok {
-		return nil, errors.New("announce must be a string")
+		return nil, errors.New("in metainfo map 'announce' must be a string")
 	}
 
 	client := &http.Client{
@@ -58,19 +58,26 @@ func peers(metaInfo map[string]any) ([]string, error) {
 		return nil, err
 	}
 
-	return buildPeerAddresses(decodedRes), nil
+	peersStr, ok := decodedRes["peers"].(string)
+	if !ok {
+		return nil, errors.New("in response body 'peers' must be a string")
+	}
+
+	return buildPeerAddresses(peersStr), nil
 }
 
-// buildPeerAddresses returns a slice of strings containing the peer addresses. It uses the map representing the response
-// body to construct IP and port for each peer
-func buildPeerAddresses(resBody map[string]any) []string {
-	peersStr := resBody["peers"].(string)
-	n := len(peersStr) / 6
+// buildPeerAddresses uses the peers string returned by the tracker to build a slice of strings containing the peer
+// addresses
+func buildPeerAddresses(peersStr string) []string {
+	// Each peer is represented using 6 bytes. 4 bytes for the IP, and 2 for the port
+	const length = 6
+
+	n := len(peersStr) / length
 
 	peerAddresses := make([]string, 0, n)
 
 	for i := 0; i < n; i++ {
-		peer := peersStr[i*6 : i*6+6]
+		peer := peersStr[i*length : i*length+length]
 
 		ipSlice := []byte(peer[:4])
 		portSlice := []byte(peer[4:])
