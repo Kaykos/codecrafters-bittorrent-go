@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -270,10 +271,16 @@ func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 	// Max block size is 2^14 = 16_384
 	blockSize := 16_384
 	pieceLength := t.info.pieceLength
-	nBlocks := pieceLength / blockSize
+	nBlocks := int(math.Ceil(float64(pieceLength / blockSize)))
 
 	// Buffer to keep all the piece data
-	pieceData := make([]byte, 0, t.info.pieceLength)
+	pieceData := make([]byte, 0, pieceLength)
+
+	// Total: 17
+	// Block: 7
+	// Piece 0: 7
+	// Piece 1: 7
+	// Piece 2: 3
 
 	for i := 0; i < nBlocks; i++ {
 		begin := i * blockSize
@@ -281,7 +288,7 @@ func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 		if i == nBlocks-1 {
 			// All message requests will ask for exaclty blockSize bytes, except the last one which most likely ask for
 			// the remaining amount of bytes
-			blockLength = pieceLength - ((nBlocks - 1) * blockSize)
+			blockLength = pieceLength - begin
 		}
 
 		requestMessage := buildRequestMessage(pieceIndex, begin, blockLength)
