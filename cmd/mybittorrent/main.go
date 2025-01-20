@@ -272,15 +272,10 @@ func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 	blockSize := 16_384
 	pieceLength := t.info.pieceLength
 	nBlocks := int(math.Ceil(float64(pieceLength / blockSize)))
+	fmt.Printf("Piece will be divided in %d blocks\n", nBlocks)
 
 	// Buffer to keep all the piece data
 	pieceData := make([]byte, 0, pieceLength)
-
-	// Total: 17
-	// Block: 7
-	// Piece 0: 7
-	// Piece 1: 7
-	// Piece 2: 3
 
 	for i := 0; i < nBlocks; i++ {
 		begin := i * blockSize
