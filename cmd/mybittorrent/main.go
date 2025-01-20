@@ -229,6 +229,7 @@ func (t torrent) peerHandshake(peer string) (string, error) {
 	return toHex(peerId), nil
 }
 
+// downloadPiece downloads the piece defined by pieceIndex into the given path.
 func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 	peerAddresses, err := t.peers()
 	if err != nil {
