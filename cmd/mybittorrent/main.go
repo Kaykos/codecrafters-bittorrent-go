@@ -23,6 +23,7 @@ import (
 type info struct {
 	length      int
 	name        string
+	nPieces     int
 	pieceLength int
 	pieces      [][]byte
 }
@@ -107,6 +108,7 @@ func parseTorrentFile(filename string) (torrent, error) {
 	t.info = info{
 		length:      infoDict["length"].(int),
 		name:        infoDict["name"].(string),
+		nPieces:     n,
 		pieceLength: infoDict["piece length"].(int),
 		pieces:      pieces,
 	}
@@ -269,14 +271,23 @@ func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 		return
 	}
 
+	fmt.Println(t.infoStr())
+
+	pieceLength := t.info.pieceLength
+
+	// When processing the last piece, the piece length is lower than the predefined pieceLength
+	if pieceIndex == t.info.nPieces-1 {
+		pieceLength = t.info.length % t.info.pieceLength
+	}
+
 	// Max block size is 2^14 = 16_384
 	blockSize := 16_384
-	pieceLength := t.info.pieceLength
-	nBlocks := int(math.Ceil(float64(pieceLength / blockSize)))
-	fmt.Printf("Piece will be divided in %d blocks\n", nBlocks)
+	nBlocks := int(math.Ceil(float64(pieceLength) / float64(blockSize)))
 
 	// Buffer to keep all the piece data
 	pieceData := make([]byte, 0, pieceLength)
+
+	fmt.Printf("Piece will be divided in %d blocks\n", nBlocks+1)
 
 	for i := 0; i < nBlocks; i++ {
 		begin := i * blockSize
