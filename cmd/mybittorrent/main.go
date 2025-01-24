@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	mathRand "math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -192,34 +193,34 @@ func toHex(b []byte) string {
 
 // handshake sends initial handshake message to the given peer. Returns a []byte that has the peer ID taken from the
 // response message sent by the peer
-func (t torrent) handshake(peer string) ([]byte, *peerConnection, func(), error) {
+func (t torrent) handshake(conn *peerConnection) ([]byte, error) {
 	peerId := make([]byte, 20)
 	rand.Read(peerId)
 
-	peerConn, closer, err := newPeerConnection(peer)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-
 	// Send handshake message
 	message := buildHandshakeMessage(peerId, t.infoHash)
-	_, err = peerConn.sendMessage(message)
+	_, err := conn.sendMessage(message)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 
 	// Receive handshake response
-	res, err := peerConn.receiveBytes(HANDSHAKE_MESSAGE_LENGTH)
+	res, err := conn.receiveBytes(HANDSHAKE_MESSAGE_LENGTH)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, err
 	}
 
-	return res, peerConn, closer, nil
+	return res, nil
 }
 
 func (t torrent) peerHandshake(peer string) (string, error) {
-	res, _, closer, err := t.handshake(peer)
+	conn, closer, err := newPeerConnection(peer)
+	if err != nil {
+		return "", err
+	}
 	defer closer()
+
+	res, err := t.handshake(conn)
 
 	if err != nil {
 		return "", err
@@ -231,47 +232,33 @@ func (t torrent) peerHandshake(peer string) (string, error) {
 	return toHex(peerId), nil
 }
 
-// downloadPiece downloads the piece defined by pieceIndex into the given path.
-func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
-	peerAddresses, err := t.peers()
-	if err != nil {
-		fmt.Println(err)
-		return
+// getPieceFromPeer downloads the piece defined by pieceIndex
+func (t torrent) getPieceFromPeer(conn *peerConnection, pieceIndex int, waitInitialMessages bool) ([]byte, error) {
+	if waitInitialMessages {
+		// Receive bitfield message
+		//fmt.Println("  Waiting for bitfield...")
+		bitfield, err := conn.receivePeerMessage()
+		if err != nil {
+			return nil, err
+		}
+		if bitfield.mType != BITFIELD {
+			return nil, fmt.Errorf("received unexpected message type. Expected bitfield(%d), received: %d", BITFIELD, bitfield.mType)
+		}
+
+		// Send interested message
+		interestedMessage := buildInterestedMessage()
+		_, err = conn.sendMessage(interestedMessage.bytes())
+
+		// Receive unchoke message
+		//fmt.Println("  Waiting for unchoke...")
+		unchoke, err := conn.receivePeerMessage()
+		if err != nil {
+			return nil, err
+		}
+		if unchoke.mType != UNCHOKE {
+			return nil, fmt.Errorf("received unexpected message type. Expected unchoke(%d), received: %d", UNCHOKE, unchoke.mType)
+		}
 	}
-
-	// TODO Proper peer selection
-	address := peerAddresses[0]
-
-	fmt.Printf("Downloading piece %d from peer %s\n", pieceIndex, address)
-
-	_, peerConn, closer, err := t.handshake(address)
-	defer closer()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	fmt.Printf("Established connection with peer\n")
-
-	// Receive bitfield message
-	bitfield, err := peerConn.receivePeerMessage()
-	if bitfield.mType != BITFIELD {
-		fmt.Printf(" !! Received unexpected message type. Expected bitfield(%d), received: %d\n", BITFIELD, bitfield.mType)
-		return
-	}
-
-	// Send interested message
-	interestedMessage := buildInterestedMessage()
-	_, err = peerConn.sendMessage(interestedMessage.bytes())
-
-	// Receive ubnchoke message
-	unchoke, err := peerConn.receivePeerMessage()
-	if unchoke.mType != UNCHOKE {
-		fmt.Printf(" !! Received unexpected message type. Expected unchoke(%d), received: %d\n", UNCHOKE, unchoke.mType)
-		return
-	}
-
-	fmt.Println(t.infoStr())
 
 	pieceLength := t.info.pieceLength
 
@@ -293,28 +280,27 @@ func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 		begin := i * blockSize
 		blockLength := blockSize
 		if i == nBlocks-1 {
-			// All message requests will ask for exaclty blockSize bytes, except the last one which most likely ask for
+			// All message requests will ask for exactly blockSize bytes, except the last one which most likely ask for
 			// the remaining amount of bytes
 			blockLength = pieceLength - begin
 		}
 
 		requestMessage := buildRequestMessage(pieceIndex, begin, blockLength)
 		fmt.Printf(" Requesting block %d with block length: %d\n", i, blockLength)
-		_, err := peerConn.sendMessage(requestMessage.bytes())
+		_, err := conn.sendMessage(requestMessage.bytes())
 		if err != nil {
-			fmt.Println(err)
-			return
+			return nil, err
 		}
 
-		piece, err := peerConn.receivePeerMessage()
+		// Receive piece message
+		//fmt.Println("  Waiting for piece...")
+		piece, err := conn.receivePeerMessage()
 		if err != nil {
-			fmt.Println(err)
-			return
+			return nil, err
 		}
 
 		if piece.mType != PIECE {
-			fmt.Printf(" !! Received unexpected message type. Expected piece(%d), received: %d\n", PIECE, piece.mType)
-			return
+			return nil, fmt.Errorf("received unexpected message type. Expected piece(%d), received: %d", PIECE, piece.mType)
 		}
 		fmt.Printf(" Received piece message for block %d\n", i)
 
@@ -323,6 +309,34 @@ func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 		pieceData = append(pieceData, piece.payload[8:]...)
 		fmt.Println()
 	}
+
+	return pieceData, nil
+}
+
+func (t torrent) downloadPieceToFile(outputPath string, pieceIndex int) {
+	peerAddresses, err := t.peers()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	// Pick a random peer
+	address := peerAddresses[mathRand.Intn(len(peerAddresses))]
+
+	conn, closer, err := newPeerConnection(address)
+	if err != nil {
+		fmt.Println(err)
+	}
+	defer closer() // Close peer connection
+
+	// Send handshake
+	_, err = t.handshake(conn)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	// Get piece data
+	pieceData, err := t.getPieceFromPeer(conn, pieceIndex, true)
 
 	expectedHash := toHex(t.info.pieces[pieceIndex])
 	fmt.Printf("Expected piece hash: %s\n", expectedHash)
@@ -350,6 +364,92 @@ func (t torrent) downloadPiece(outputPath string, pieceIndex int) {
 	}
 	defer file.Close()
 	n, err := file.Write(pieceData)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("\nWrote %d bytes to %s \n", n, outputPath)
+
+}
+
+func (t torrent) downloadFile(outputPath string) {
+	peers, _ := t.peers()
+
+	connections := make(map[string]*peerConnection, len(peers))
+	closerFuncs := make([]func(), 0, len(peers))
+
+	defer func() {
+		// Execute all closer functions
+		for _, c := range closerFuncs {
+			c()
+		}
+	}()
+
+	fileData := make([]byte, 0, t.info.length)
+
+	for pieceIndex, pieceHash := range t.info.pieces {
+		address := peers[mathRand.Intn(len(peers))]
+		fmt.Printf("Downloading piece %d from peer %s\n", pieceIndex, address)
+
+		conn, ok := connections[address]
+
+		if !ok {
+			// Create connection if we haven't done yet
+			newConn, closer, err := newPeerConnection(address)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			conn = newConn
+			connections[address] = conn
+			// Add closer function
+			closerFuncs = append(closerFuncs, closer)
+
+			// Send handshake
+			_, err = t.handshake(conn)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+
+		// Get piece data
+		// If connection already exists (we had downloaded a piece from that peer),
+		// skip the initial messages: bitfield, interested, unchoke
+		pieceData, err := t.getPieceFromPeer(conn, pieceIndex, !ok)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		expectedHash := toHex(pieceHash)
+		fmt.Printf("Expected piece hash:    %s\n", expectedHash)
+
+		h := sha1.New()
+		h.Write(pieceData)
+		writtenPieceHash := toHex(h.Sum(nil))
+		fmt.Printf("Downloaded piece hash:  %s\n", writtenPieceHash)
+
+		if expectedHash != writtenPieceHash {
+			fmt.Printf(" !! Piece hashes do not mash. Terminating")
+			return
+		}
+
+		fileData = append(fileData, pieceData...)
+	}
+
+	// Create subfolder if outputPath has it
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0770); err != nil {
+		fmt.Printf(" !! Could not create output directory: %s\n", err)
+		return
+	}
+
+	file, err := os.Create(outputPath)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer file.Close()
+	n, err := file.Write(fileData)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -437,7 +537,24 @@ func main() {
 			return
 		}
 
-		torrent.downloadPiece(output, pieceIndex)
+		torrent.downloadPieceToFile(output, pieceIndex)
+	} else if command == "download" {
+		flag := os.Args[2]
+		if flag != "-o" {
+			fmt.Println("Missing output flag: '-o'")
+			return
+		}
+
+		output := os.Args[3]
+		file := os.Args[4]
+
+		torrent, err := parseTorrentFile(file)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		torrent.downloadFile(output)
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
