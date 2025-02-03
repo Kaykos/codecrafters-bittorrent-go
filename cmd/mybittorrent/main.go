@@ -13,6 +13,7 @@ import (
 	"math"
 	mathRand "math/rand"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -457,6 +458,21 @@ func (t torrent) downloadFile(outputPath string) {
 	fmt.Printf("\nWrote %d bytes to %s \n", n, outputPath)
 }
 
+func parseMagnetLink(link string) {
+	// Link starts with: 'magnet:?'
+	queryParameters, err := url.ParseQuery(link[8:])
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	tracker := queryParameters.Get("tr")
+	// xt starts with: 'urn:btih:'
+	infoHash := queryParameters.Get("xt")[9:]
+
+	fmt.Printf("Tracker URL: %s\nInfo Hash: %s\n", tracker, infoHash)
+}
+
 func main() {
 	command := os.Args[1]
 	//command = "info"
@@ -555,6 +571,9 @@ func main() {
 		}
 
 		torrent.downloadFile(output)
+	} else if command == "magnet_parse" {
+		magnetLink := os.Args[2]
+		parseMagnetLink(magnetLink)
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
