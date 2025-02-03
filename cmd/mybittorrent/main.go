@@ -275,7 +275,7 @@ func (t torrent) getPieceFromPeer(conn *peerConnection, pieceIndex int, waitInit
 	// Buffer to keep all the piece data
 	pieceData := make([]byte, 0, pieceLength)
 
-	fmt.Printf("Piece will be divided in %d blocks\n", nBlocks+1)
+	//fmt.Printf("Piece will be divided in %d blocks\n", nBlocks+1)
 
 	for i := 0; i < nBlocks; i++ {
 		begin := i * blockSize
@@ -287,7 +287,7 @@ func (t torrent) getPieceFromPeer(conn *peerConnection, pieceIndex int, waitInit
 		}
 
 		requestMessage := buildRequestMessage(pieceIndex, begin, blockLength)
-		fmt.Printf(" Requesting block %d with block length: %d\n", i, blockLength)
+		//fmt.Printf(" Requesting block %d with block length: %d\n", i, blockLength)
 		_, err := conn.sendMessage(requestMessage.bytes())
 		if err != nil {
 			return nil, err
@@ -303,7 +303,7 @@ func (t torrent) getPieceFromPeer(conn *peerConnection, pieceIndex int, waitInit
 		if piece.mType != PIECE {
 			return nil, fmt.Errorf("received unexpected message type. Expected piece(%d), received: %d", PIECE, piece.mType)
 		}
-		fmt.Printf(" Received piece message for block %d\n", i)
+		//fmt.Printf(" Received piece message for block %d\n", i)
 
 		// Piece message payload is: 4 bytes for index. 4 bytes for begin. Rest of the bytes are the piece data
 		// Ignore the first 8 bytes, and only use the actual piece data
