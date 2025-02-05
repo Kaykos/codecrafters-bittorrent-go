@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
@@ -242,57 +243,67 @@ func (t torrent) downloadFile(outputPath string) {
 		}
 	}()
 
-	fileData := make([]byte, 0, t.info.length)
+	fileData := make([]byte, t.info.length)
+
+	wg := sync.WaitGroup{}
+	wg.Add(t.info.nPieces)
 
 	for pieceIndex, pieceHash := range t.info.pieces {
-		address := peers[mathRand.Intn(len(peers))]
-		fmt.Printf("Downloading piece %d from peer %s\n", pieceIndex, address)
+		go func() {
+			defer wg.Done()
 
-		conn, ok := connections[address]
+			address := peers[mathRand.Intn(len(peers))]
+			conn, ok := connections[address]
 
-		if !ok {
-			// Create connection if we haven't done yet
-			newConn, closer, err := newPeerConnection(address)
+			if !ok {
+				// Create connection if we haven't done yet
+				newConn, closer, err := newPeerConnection(address)
+				if err != nil {
+					fmt.Println(err)
+					return
+				}
+				conn = newConn
+				connections[address] = conn
+				// Add closer function
+				closerFuncs = append(closerFuncs, closer)
+
+				// Send handshake
+				_, err = t.handshake(conn, false)
+				if err != nil {
+					fmt.Println(err)
+				}
+			}
+
+			fmt.Printf("Downloading piece %d from peer %s\n", pieceIndex, address)
+
+			// Get piece data
+			// If connection already exists (we had downloaded a piece from that peer),
+			// skip the initial messages: bitfield, interested, unchoke
+			pieceData, err := t.getPieceFromPeer(conn, pieceIndex, !ok)
 			if err != nil {
 				fmt.Println(err)
 				return
 			}
-			conn = newConn
-			connections[address] = conn
-			// Add closer function
-			closerFuncs = append(closerFuncs, closer)
 
-			// Send handshake
-			_, err = t.handshake(conn, false)
-			if err != nil {
-				fmt.Println(err)
+			expectedHash := toHex(pieceHash)
+			fmt.Printf("Expected piece hash:    %s\n", expectedHash)
+
+			h := sha1.New()
+			h.Write(pieceData)
+			writtenPieceHash := toHex(h.Sum(nil))
+			fmt.Printf("Downloaded piece hash:  %s\n", writtenPieceHash)
+
+			if expectedHash != writtenPieceHash {
+				fmt.Printf(" !! Piece hashes do not mash. Terminating")
+				return
 			}
-		}
 
-		// Get piece data
-		// If connection already exists (we had downloaded a piece from that peer),
-		// skip the initial messages: bitfield, interested, unchoke
-		pieceData, err := t.getPieceFromPeer(conn, pieceIndex, !ok)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		expectedHash := toHex(pieceHash)
-		fmt.Printf("Expected piece hash:    %s\n", expectedHash)
-
-		h := sha1.New()
-		h.Write(pieceData)
-		writtenPieceHash := toHex(h.Sum(nil))
-		fmt.Printf("Downloaded piece hash:  %s\n", writtenPieceHash)
-
-		if expectedHash != writtenPieceHash {
-			fmt.Printf(" !! Piece hashes do not mash. Terminating")
-			return
-		}
-
-		fileData = append(fileData, pieceData...)
+			copy(fileData[pieceIndex*t.info.pieceLength:], pieceData)
+			//fileData = append(fileData, pieceData...)
+		}()
 	}
+
+	wg.Wait()
 
 	// Create subfolder if outputPath has it
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0770); err != nil {
