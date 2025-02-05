@@ -286,12 +286,12 @@ func (t torrent) downloadFile(outputPath string) {
 			}
 
 			expectedHash := toHex(pieceHash)
-			fmt.Printf("Expected piece hash:    %s\n", expectedHash)
+			//fmt.Printf("Expected piece hash:    %s\n", expectedHash)
 
 			h := sha1.New()
 			h.Write(pieceData)
 			writtenPieceHash := toHex(h.Sum(nil))
-			fmt.Printf("Downloaded piece hash:  %s\n", writtenPieceHash)
+			//fmt.Printf("Downloaded piece hash:  %s\n", writtenPieceHash)
 
 			if expectedHash != writtenPieceHash {
 				fmt.Printf(" !! Piece hashes do not mash. Terminating")
@@ -299,6 +299,7 @@ func (t torrent) downloadFile(outputPath string) {
 			}
 
 			copy(fileData[pieceIndex*t.info.pieceLength:], pieceData)
+			fmt.Printf(" Downloaded piece %d", pieceIndex)
 			//fileData = append(fileData, pieceData...)
 		}()
 	}
