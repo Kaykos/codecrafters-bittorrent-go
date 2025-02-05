@@ -107,14 +107,21 @@ func newPeerMessage(b []byte) *peerMessage {
 }
 
 // buildHandshakeMessage returns the byte slice needed for handshake
-func buildHandshakeMessage(peerId, infoHash []byte) []byte {
+func buildHandshakeMessage(peerId, infoHash []byte, supportExtensions bool) []byte {
 	message := make([]byte, 0, HANDSHAKE_MESSAGE_LENGTH)
 
 	message = append(message, byte(19))                         // First byte indicates the length of the protocol string
 	message = append(message, []byte("BitTorrent protocol")...) // Protocol string (19 bytes)
-	message = append(message, make([]byte, 8)...)               // Eight reserved bytes, set to 0
-	message = append(message, infoHash...)                      // 20 bytes for info hash
-	message = append(message, peerId...)                        // 20 bytes for random peer id
+	reservedBytes := make([]byte, 8)                            // Eight reserved bytes, set to 0
+	if supportExtensions {
+		// If our client supports extensions, the 20th bit from the right (count starting in 0, from the total 64 reserved bits) is set to 1
+		// This sets the byte to 00010000, which is 16 in decimal
+		reservedBytes[5] = 16 //
+	}
+
+	message = append(message, reservedBytes...)
+	message = append(message, infoHash...) // 20 bytes for info hash
+	message = append(message, peerId...)   // 20 bytes for random peer id
 
 	return message
 }

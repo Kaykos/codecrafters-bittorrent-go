@@ -1,40 +1,20 @@
 package main
 
 import (
-	"context"
-	"crypto/rand"
 	"crypto/sha1"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"math"
 	mathRand "math/rand"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
-
-type info struct {
-	length      int
-	name        string
-	nPieces     int
-	pieceLength int
-	pieces      [][]byte
-}
-
-type torrent struct {
-	announce string
-	info     info
-	infoHash []byte
-}
 
 // buildPeerAddresses uses the peers string returned by the tracker to build a slice of strings containing the peer
 // addresses
@@ -64,61 +44,22 @@ func buildPeerAddresses(peersStr string) []string {
 // peersQueryParams builds the query parameters needed to execute the peers request. Returns
 // a string containing the URL encoded query parameters
 func peersQueryParams(t torrent, req *http.Request) (string, error) {
+	left := t.info.length
+	if left == 0 {
+		// When downloading from magnet link, we don't know the file size. Hardcode a value
+		left = 999
+	}
+
 	q := req.URL.Query()
 	q.Add("info_hash", string(t.infoHash))
 	q.Add("peer_id", "kaykos-go-bittorrent")
 	q.Add("port", "6881")
 	q.Add("uploaded", "0")
 	q.Add("downloaded", "0")
-	q.Add("left", strconv.Itoa(t.info.length))
+	q.Add("left", strconv.Itoa(left))
 	q.Add("compact", "1")
 
 	return q.Encode(), nil
-}
-
-func parseTorrentFile(filename string) (torrent, error) {
-	t := torrent{}
-
-	file, err := os.Open(filename)
-	if err != nil {
-		return t, err
-	}
-
-	defer file.Close()
-
-	fileContent, err := io.ReadAll(file)
-	if err != nil {
-		return t, err
-	}
-
-	torrentDict, _, err := decodeDictionary(string(fileContent))
-	if err != nil {
-		return t, err
-	}
-
-	infoDict := torrentDict["info"].(map[string]any)
-	piecesStr := infoDict["pieces"].(string)
-
-	n := len(piecesStr) / 20
-	pieces := make([][]byte, n)
-
-	for i := 0; i < n; i++ {
-		pieceStr := piecesStr[i*20 : (i+1)*20]
-		pieces[i] = []byte(pieceStr)
-	}
-
-	t.info = info{
-		length:      infoDict["length"].(int),
-		name:        infoDict["name"].(string),
-		nPieces:     n,
-		pieceLength: infoDict["piece length"].(int),
-		pieces:      pieces,
-	}
-
-	t.announce = torrentDict["announce"].(string)
-	t.infoHash = infoHash(infoDict)
-
-	return t, nil
 }
 
 // infoStr returns a string representing a summary of the torrent file
@@ -135,49 +76,6 @@ func (t torrent) infoStr() string {
 		t.announce, t.info.length, hexInfoHash, t.info.pieceLength, hashPiecesStr)
 }
 
-// peers returns a slice of strings containing the peers of torrent. This is done by requesting the tracker and parsing
-// the response to build IP and port for each peer
-func (t torrent) peers() ([]string, error) {
-	client := &http.Client{
-		Timeout: time.Second * 10,
-	}
-
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, t.announce, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	queryParams, err := peersQueryParams(t, req)
-	if err != nil {
-		return nil, err
-	}
-	req.URL.RawQuery = queryParams
-
-	res, err := client.Do(req)
-	defer res.Body.Close()
-
-	if res.StatusCode != http.StatusOK {
-		return nil, errors.New(res.Status)
-	}
-
-	resContent, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	decodedRes, _, err := decodeDictionary(string(resContent))
-	if err != nil {
-		return nil, err
-	}
-
-	peersStr, ok := decodedRes["peers"].(string)
-	if !ok {
-		return nil, errors.New("in response body 'peers' must be a string")
-	}
-
-	return buildPeerAddresses(peersStr), nil
-}
-
 // infoHash bencodes the info map and returns the SHA-1 hash string representation
 func infoHash(info map[string]any) []byte {
 	infoStr := bencodeMap(info)
@@ -190,47 +88,6 @@ func infoHash(info map[string]any) []byte {
 
 func toHex(b []byte) string {
 	return hex.EncodeToString(b)
-}
-
-// handshake sends initial handshake message to the given peer. Returns a []byte that has the peer ID taken from the
-// response message sent by the peer
-func (t torrent) handshake(conn *peerConnection) ([]byte, error) {
-	peerId := make([]byte, 20)
-	rand.Read(peerId)
-
-	// Send handshake message
-	message := buildHandshakeMessage(peerId, t.infoHash)
-	_, err := conn.sendMessage(message)
-	if err != nil {
-		return nil, err
-	}
-
-	// Receive handshake response
-	res, err := conn.receiveBytes(HANDSHAKE_MESSAGE_LENGTH)
-	if err != nil {
-		return nil, err
-	}
-
-	return res, nil
-}
-
-func (t torrent) peerHandshake(peer string) (string, error) {
-	conn, closer, err := newPeerConnection(peer)
-	if err != nil {
-		return "", err
-	}
-	defer closer()
-
-	res, err := t.handshake(conn)
-
-	if err != nil {
-		return "", err
-	}
-
-	// Received message has identical structure to the one sent
-	// Get the peer id from the last 20 bytes of the message
-	peerId := res[48:]
-	return toHex(peerId), nil
 }
 
 // getPieceFromPeer downloads the piece defined by pieceIndex
@@ -308,7 +165,6 @@ func (t torrent) getPieceFromPeer(conn *peerConnection, pieceIndex int, waitInit
 		// Piece message payload is: 4 bytes for index. 4 bytes for begin. Rest of the bytes are the piece data
 		// Ignore the first 8 bytes, and only use the actual piece data
 		pieceData = append(pieceData, piece.payload[8:]...)
-		fmt.Println()
 	}
 
 	return pieceData, nil
@@ -331,7 +187,7 @@ func (t torrent) downloadPieceToFile(outputPath string, pieceIndex int) {
 	defer closer() // Close peer connection
 
 	// Send handshake
-	_, err = t.handshake(conn)
+	_, err = t.handshake(conn, false)
 	if err != nil {
 		fmt.Println(err)
 	}
@@ -407,7 +263,7 @@ func (t torrent) downloadFile(outputPath string) {
 			closerFuncs = append(closerFuncs, closer)
 
 			// Send handshake
-			_, err = t.handshake(conn)
+			_, err = t.handshake(conn, false)
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -456,21 +312,6 @@ func (t torrent) downloadFile(outputPath string) {
 		return
 	}
 	fmt.Printf("\nWrote %d bytes to %s \n", n, outputPath)
-}
-
-func parseMagnetLink(link string) {
-	// Link starts with: 'magnet:?'
-	queryParameters, err := url.ParseQuery(link[8:])
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	tracker := queryParameters.Get("tr")
-	// xt starts with: 'urn:btih:'
-	infoHash := queryParameters.Get("xt")[9:]
-
-	fmt.Printf("Tracker URL: %s\nInfo Hash: %s\n", tracker, infoHash)
 }
 
 func main() {
@@ -525,7 +366,7 @@ func main() {
 			return
 		}
 
-		peerId, err := torrent.peerHandshake(peerAddress)
+		peerId, err := torrent.peerHandshake(peerAddress, false)
 		if err != nil {
 			fmt.Println(err)
 			return
@@ -573,7 +414,27 @@ func main() {
 		torrent.downloadFile(output)
 	} else if command == "magnet_parse" {
 		magnetLink := os.Args[2]
-		parseMagnetLink(magnetLink)
+		torrent, err := parseMagnetLink(magnetLink)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		fmt.Printf("Tracker URL: %s\nInfo Hash: %s\n", torrent.announce, toHex(torrent.infoHash))
+	} else if command == "magnet_handshake" {
+		magnetLink := os.Args[2]
+		torrent, err := parseMagnetLink(magnetLink)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		peerId, err := torrent.magnetHandshake()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		fmt.Printf("Peer ID: %s\n", peerId)
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
