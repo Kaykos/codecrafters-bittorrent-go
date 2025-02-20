@@ -11,6 +11,7 @@ const INTERESTED = uint8(2)
 const BITFIELD = uint8(5)
 const REQUEST = uint8(6)
 const PIECE = uint8(7)
+const EXTENSION_HANDSHAKE = uint8(20)
 
 const HANDSHAKE_MESSAGE_LENGTH = 68
 
@@ -116,7 +117,7 @@ func buildHandshakeMessage(peerId, infoHash []byte, supportExtensions bool) []by
 	if supportExtensions {
 		// If our client supports extensions, the 20th bit from the right (count starting in 0, from the total 64 reserved bits) is set to 1
 		// This sets the byte to 00010000, which is 16 in decimal
-		reservedBytes[5] = 16 //
+		reservedBytes[5] = 16
 	}
 
 	message = append(message, reservedBytes...)
@@ -124,6 +125,26 @@ func buildHandshakeMessage(peerId, infoHash []byte, supportExtensions bool) []by
 	message = append(message, peerId...)   // 20 bytes for random peer id
 
 	return message
+}
+
+func buildExtensionHandshakeMessage() peerMessage {
+	messagePayload := map[string]any{
+		"m": map[string]any{
+			"ut_metadata": 123,
+		},
+	}
+	// d1:md11:ut_metadatai123eee
+
+	var payload []byte
+
+	payload = append(payload, byte(0))
+	payload = append(payload, []byte(bencodeMap(messagePayload))...)
+
+	return peerMessage{
+		length:  uint32(len(payload)) + 1,
+		mType:   EXTENSION_HANDSHAKE,
+		payload: payload,
+	}
 }
 
 func buildInterestedMessage() peerMessage {

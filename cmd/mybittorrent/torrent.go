@@ -182,5 +182,36 @@ func (t torrent) magnetHandshake() (string, error) {
 		return "", err
 	}
 
-	return t.peerHandshake(peers[0], true)
+	peer := peers[0]
+
+	conn, closer, err := newPeerConnection(peer)
+	defer closer()
+
+	// Traditional handshake
+	res, err := t.handshake(conn, true)
+	if err != nil {
+		return "", err
+	}
+
+	// Receive bitfield
+	_, err = conn.receivePeerMessage()
+	if err != nil {
+		return "", err
+	}
+
+	// Just as the handshake message sent, the received message has 8 reserved bytes
+	// If the peer supports extensions, the 6 byte is set to 16
+	peerSupportsExtensions := res[25] == 16
+	if peerSupportsExtensions {
+		// If the peer handles extensions, send extension handshake
+
+		extensionHandshake := buildExtensionHandshakeMessage()
+		_, err := conn.sendMessage(extensionHandshake.bytes())
+		if err != nil {
+			return "", err
+		}
+	}
+
+	peerId := res[48:]
+	return toHex(peerId), nil
 }
