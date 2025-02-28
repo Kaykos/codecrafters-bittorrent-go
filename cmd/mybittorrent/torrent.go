@@ -176,10 +176,13 @@ func (t torrent) peerHandshake(peer string, supportExtensions bool) (string, err
 	return toHex(peerId), nil
 }
 
-func (t torrent) magnetHandshake() (string, error) {
+func (t torrent) magnetHandshake() (string, int, error) {
+	var peerId string
+	var peerMetadataExtensionId int
+
 	peers, err := t.peers()
 	if err != nil {
-		return "", err
+		return peerId, peerMetadataExtensionId, err
 	}
 
 	peer := peers[0]
@@ -190,13 +193,13 @@ func (t torrent) magnetHandshake() (string, error) {
 	// Traditional handshake
 	res, err := t.handshake(conn, true)
 	if err != nil {
-		return "", err
+		return peerId, peerMetadataExtensionId, err
 	}
 
 	// Receive bitfield
 	_, err = conn.receivePeerMessage()
 	if err != nil {
-		return "", err
+		return peerId, peerMetadataExtensionId, err
 	}
 
 	// Just as the handshake message sent, the received message has 8 reserved bytes
@@ -204,14 +207,31 @@ func (t torrent) magnetHandshake() (string, error) {
 	peerSupportsExtensions := res[25] == 16
 	if peerSupportsExtensions {
 		// If the peer handles extensions, send extension handshake
-
 		extensionHandshake := buildExtensionHandshakeMessage()
 		_, err := conn.sendMessage(extensionHandshake.bytes())
 		if err != nil {
-			return "", err
+			return peerId, peerMetadataExtensionId, err
 		}
+
+		// Receive extension handshake response
+		resHandshake, err := conn.receivePeerMessage()
+		if err != nil {
+			return peerId, peerMetadataExtensionId, err
+		}
+
+		// First byte is empty
+		payload := resHandshake.payload[1:]
+		// Decode the bencoded map
+		decoded, _, _ := decodeDictionary(string(payload))
+
+		// The resulting map has a "m" key which contains the metadata
+		var mMap map[string]any
+		mMap = decoded["m"].(map[string]any)
+
+		// Get the ID of the ut_metadata extension
+		peerMetadataExtensionId = mMap["ut_metadata"].(int)
 	}
 
-	peerId := res[48:]
-	return toHex(peerId), nil
+	peerId = toHex(res[48:])
+	return peerId, peerMetadataExtensionId, nil
 }

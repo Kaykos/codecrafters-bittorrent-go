@@ -441,12 +441,16 @@ func main() {
 			return
 		}
 
-		peerId, err := torrent.magnetHandshake()
+		peerId, peerExtensionId, err := torrent.magnetHandshake()
 		if err != nil {
 			fmt.Println(err)
 			return
 		}
 		fmt.Printf("Peer ID: %s\n", peerId)
+		if peerExtensionId != 0 {
+			fmt.Printf("Peer Metadata Extension ID: %d\n", peerExtensionId)
+
+		}
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
