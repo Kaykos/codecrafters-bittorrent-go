@@ -451,6 +451,19 @@ func main() {
 			fmt.Printf("Peer Metadata Extension ID: %d\n", peerExtensionId)
 
 		}
+	} else if command == "magnet_info" {
+		magnetLink := os.Args[2]
+		torrent, err := parseMagnetLink(magnetLink)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		err = torrent.magnetInfo()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)

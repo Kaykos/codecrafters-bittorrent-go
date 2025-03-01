@@ -235,3 +235,65 @@ func (t torrent) magnetHandshake() (string, int, error) {
 	peerId = toHex(res[48:])
 	return peerId, peerMetadataExtensionId, nil
 }
+
+func (t torrent) magnetInfo() error {
+	peers, err := t.peers()
+	if err != nil {
+		return err
+	}
+
+	peer := peers[0]
+
+	conn, closer, err := newPeerConnection(peer)
+	defer closer()
+
+	// Traditional handshake
+	res, err := t.handshake(conn, true)
+	if err != nil {
+		return err
+	}
+
+	// Receive bitfield
+	_, err = conn.receivePeerMessage()
+	if err != nil {
+		return err
+	}
+
+	// Just as the handshake message sent, the received message has 8 reserved bytes
+	// If the peer supports extensions, the 6 byte is set to 16
+	peerSupportsExtensions := res[25] == 16
+	if peerSupportsExtensions {
+		// If the peer handles extensions, send extension handshake
+		extensionHandshake := buildExtensionHandshakeMessage()
+		_, err := conn.sendMessage(extensionHandshake.bytes())
+		if err != nil {
+			return err
+		}
+
+		// Receive extension handshake response
+		resHandshake, err := conn.receivePeerMessage()
+		if err != nil {
+			return err
+		}
+
+		// First byte is empty
+		payload := resHandshake.payload[1:]
+		// Decode the bencoded map
+		decoded, _, _ := decodeDictionary(string(payload))
+
+		// The resulting map has a "m" key which contains the metadata
+		var mMap map[string]any
+		mMap = decoded["m"].(map[string]any)
+
+		// Get the ID of the ut_metadata extension
+		peerMetadataExtensionId := mMap["ut_metadata"].(int)
+
+		metadataRequestMessage := buildMetadataRequestMessage(peerMetadataExtensionId)
+		_, err = conn.sendMessage(metadataRequestMessage.bytes())
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}

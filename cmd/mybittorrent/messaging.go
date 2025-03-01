@@ -11,7 +11,7 @@ const INTERESTED = uint8(2)
 const BITFIELD = uint8(5)
 const REQUEST = uint8(6)
 const PIECE = uint8(7)
-const EXTENSION_HANDSHAKE = uint8(20)
+const EXTENSION_MESSAGE = uint8(20)
 
 const HANDSHAKE_MESSAGE_LENGTH = 68
 
@@ -127,26 +127,6 @@ func buildHandshakeMessage(peerId, infoHash []byte, supportExtensions bool) []by
 	return message
 }
 
-func buildExtensionHandshakeMessage() peerMessage {
-	messagePayload := map[string]any{
-		"m": map[string]any{
-			"ut_metadata": 123,
-		},
-	}
-	// d1:md11:ut_metadatai123eee
-
-	var payload []byte
-
-	payload = append(payload, byte(0))
-	payload = append(payload, []byte(bencodeMap(messagePayload))...)
-
-	return peerMessage{
-		length:  uint32(len(payload)) + 1,
-		mType:   EXTENSION_HANDSHAKE,
-		payload: payload,
-	}
-}
-
 func buildInterestedMessage() peerMessage {
 	return peerMessage{
 		length: uint32(1),
@@ -165,6 +145,48 @@ func buildRequestMessage(pieceIndex, begin, blockLength int) peerMessage {
 	return peerMessage{
 		length:  uint32(13), // Payload length + 1 byte for mType
 		mType:   REQUEST,
+		payload: payload,
+	}
+}
+
+const METADATA_EXTENSTION_REQUEST = 0
+const METADATA_EXTENSTION_DATA = 1
+const METADATA_EXTENSTION_REJECT = 2
+
+func buildExtensionHandshakeMessage() peerMessage {
+	messagePayload := map[string]any{
+		"m": map[string]any{
+			"ut_metadata": 123,
+		},
+	}
+	// d1:md11:ut_metadatai123eee
+
+	var payload []byte
+
+	payload = append(payload, byte(0))
+	payload = append(payload, []byte(bencodeMap(messagePayload))...)
+
+	return peerMessage{
+		length:  uint32(len(payload)) + 1,
+		mType:   EXTENSION_MESSAGE,
+		payload: payload,
+	}
+}
+
+func buildMetadataRequestMessage(metadataExtensionId int) peerMessage {
+	messagePayload := map[string]any{
+		"msg_type": METADATA_EXTENSTION_REQUEST,
+		"piece":    0, // Zero-based page index, we'll always be requesting just one page, so always 0
+	}
+
+	var payload []byte
+
+	payload = append(payload, byte(metadataExtensionId))
+	payload = append(payload, []byte(bencodeMap(messagePayload))...)
+
+	return peerMessage{
+		length:  uint32(len(payload)) + 1,
+		mType:   EXTENSION_MESSAGE,
 		payload: payload,
 	}
 }
