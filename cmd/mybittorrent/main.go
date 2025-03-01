@@ -299,7 +299,7 @@ func (t torrent) downloadFile(outputPath string) {
 			}
 
 			copy(fileData[pieceIndex*t.info.pieceLength:], pieceData)
-			fmt.Printf(" Downloaded piece %d", pieceIndex)
+			fmt.Printf(" Downloaded piece %d\n", pieceIndex)
 			//fileData = append(fileData, pieceData...)
 		}()
 	}
