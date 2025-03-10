@@ -236,7 +236,7 @@ func (t torrent) magnetHandshake() (string, int, error) {
 	return peerId, peerMetadataExtensionId, nil
 }
 
-func (t torrent) magnetInfo() error {
+func (t *torrent) magnetInfo() error {
 	peers, err := t.peers()
 	if err != nil {
 		return err
@@ -292,6 +292,36 @@ func (t torrent) magnetInfo() error {
 		_, err = conn.sendMessage(metadataRequestMessage.bytes())
 		if err != nil {
 			return err
+		}
+
+		// Receive metadata 'data' message
+		dataMessage, err := conn.receivePeerMessage()
+		if err != nil {
+			return err
+		}
+
+		_, usedBytes, err := decodeDictionary(string(dataMessage.payload[1:]))
+		if err != nil {
+			return err
+		}
+
+		metadata, _, err := decodeDictionary(string(dataMessage.payload[usedBytes+1:]))
+		piecesStr := metadata["pieces"].(string)
+
+		n := len(piecesStr) / 20
+		pieces := make([][]byte, n)
+
+		for i := 0; i < n; i++ {
+			pieceStr := piecesStr[i*20 : (i+1)*20]
+			pieces[i] = []byte(pieceStr)
+		}
+
+		t.info = info{
+			length:      metadata["length"].(int),
+			name:        metadata["name"].(string),
+			nPieces:     n,
+			pieceLength: metadata["piece length"].(int),
+			pieces:      pieces,
 		}
 	}
 

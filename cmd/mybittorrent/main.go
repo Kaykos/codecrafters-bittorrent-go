@@ -464,6 +464,8 @@ func main() {
 			fmt.Println(err)
 			return
 		}
+
+		fmt.Println(torrent.infoStr())
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
