@@ -248,7 +248,7 @@ func (t *torrent) magnetInfo() error {
 	defer closer()
 
 	// Traditional handshake
-	res, err := t.handshake(conn, true)
+	handshakeResponse, err := t.handshake(conn, true)
 	if err != nil {
 		return err
 	}
@@ -261,7 +261,7 @@ func (t *torrent) magnetInfo() error {
 
 	// Just as the handshake message sent, the received message has 8 reserved bytes
 	// If the peer supports extensions, the 6 byte is set to 16
-	peerSupportsExtensions := res[25] == 16
+	peerSupportsExtensions := handshakeResponse[25] == 16
 	if peerSupportsExtensions {
 		// If the peer handles extensions, send extension handshake
 		extensionHandshake := buildExtensionHandshakeMessage()
@@ -271,15 +271,13 @@ func (t *torrent) magnetInfo() error {
 		}
 
 		// Receive extension handshake response
-		resHandshake, err := conn.receivePeerMessage()
+		extensionHandshakeResponse, err := conn.receivePeerMessage()
 		if err != nil {
 			return err
 		}
 
-		// First byte is empty
-		payload := resHandshake.payload[1:]
-		// Decode the bencoded map
-		decoded, _, _ := decodeDictionary(string(payload))
+		// Decode the bencoded map. Payload comes after first byte
+		decoded, _, _ := decodeDictionary(string(extensionHandshakeResponse.payload[1:]))
 
 		// The resulting map has a "m" key which contains the metadata
 		var mMap map[string]any

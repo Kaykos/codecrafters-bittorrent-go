@@ -466,6 +466,33 @@ func main() {
 		}
 
 		fmt.Println(torrent.infoStr())
+	} else if command == "magnet_download_piece" {
+		flag := os.Args[2]
+		if flag != "-o" {
+			fmt.Println("Missing output flag: '-o'")
+			return
+		}
+
+		output := os.Args[3]
+		magnetLink := os.Args[4]
+		pieceIndex, err := strconv.Atoi(os.Args[5])
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		torrent, err := parseMagnetLink(magnetLink)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		err = torrent.magnetInfo()
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		torrent.downloadPieceToFile(output, pieceIndex)
 	} else {
 		fmt.Println("Unknown command: " + command)
 		os.Exit(1)
