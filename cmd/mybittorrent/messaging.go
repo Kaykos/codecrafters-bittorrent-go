@@ -71,9 +71,14 @@ func (pc *peerConnection) receivePeerMessage() (*peerMessage, error) {
 	return newPeerMessage(msgBuf), nil
 }
 
-// sendMessage writes a message into the peer connection.
-func (pc *peerConnection) sendMessage(message []byte) (int, error) {
+// sendMessage writes bytes into the peer connection.
+func (pc *peerConnection) sendBytes(message []byte) (int, error) {
 	return pc.connection.Write(message)
+}
+
+// sendMessage writes a message into the peer connection.
+func (pc *peerConnection) sendMessage(message peerMessage) (int, error) {
+	return pc.connection.Write(message.bytes())
 }
 
 // peerMessage represents the messages transmitted between peers.
